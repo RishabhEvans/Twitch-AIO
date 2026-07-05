@@ -1,0 +1,4 @@
+# install:  pip install -r requirements.txt  &&  patchright install chrome
+# (code defaults to BROWSER_CHANNEL=chrome on both Windows and Ubuntu; set BROWSER_CHANNEL=chromium + run `patchright install chromium` to use bundled Chromium instead)
+patchright>=1.50
+requests>=2.31.0
