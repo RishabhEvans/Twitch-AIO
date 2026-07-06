@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from patchright.sync_api import sync_playwright
 from config import (
-    Config, BLOCKED_DOMAINS, fetch_cybertemp_domains,
+    Config, BLOCKED_DOMAINS, fetch_kopechka_domains,
     PROXY_SPEED_CHECK_TIMEOUT, PROXY_NAV_TIMEOUT_FLOOR, PROXY_NAV_TIMEOUT_CEILING,
     PROXY_WAIT_TIMEOUT_FLOOR, PROXY_WAIT_TIMEOUT_CEILING,
     PROXY_QUARANTINE_COOLDOWN, PROXY_USE_MAX, PROXY_NAV_MULTIPLIER, PROXY_WAIT_MULTIPLIER,
@@ -52,9 +52,9 @@ _ANSI = re.compile(r"\033\[[0-9;]*m")
 file_lock = threading.Lock()
 
 cfg = Config
-CT_BASE = cfg.CybertempApiBase.rstrip("/")
-CT_KEY = cfg.CybertempApiKey
-CT_HEADERS = {"X-API-KEY": CT_KEY, "Accept": "application/json"}
+CT_BASE = cfg.KopechkaApiBase.rstrip("/")
+CT_KEY = cfg.KopechkaApiKey
+CT_HEADERS = {"Accept": "application/json"}
 CT_DOMAINS = []
 CT_RPS = 50
 _ct_gap = 1.0 / max(0.5, CT_RPS)
@@ -112,14 +112,28 @@ def get_ct_domain():
 # ─── inboxes ──────────────────────────────────────────────────
 
 def create_inbox():
-    length = random.randint(14, 24)
-    chars = string.ascii_lowercase + string.digits
-    local = "".join(random.choice(chars) for _ in range(length))
-    for _ in range(10):
-        domain = get_ct_domain()
-        if domain not in BLOCKED_DOMAINS:
-            return f"{local}@{domain}"
-    return f"{local}@cybertemp.xyz"
+    try:
+        r = __import__('requests').get(
+            f"{Config.KopechkaApiBase}/create-inbox",
+            params={"api_key": Config.KopechkaApiKey},
+            timeout=15,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("status") == "success":
+                email = data.get("email")
+                if email:
+                    domain = email.split("@")[1] if "@" in email else ""
+                    if domain not in BLOCKED_DOMAINS:
+                        return email
+    except Exception:
+        pass
+    length = __import__('random').randint(14, 24)
+    chars = __import__('string').ascii_lowercase + __import__('string').digits
+    local = "".join(__import__('random').choice(chars) for _ in range(length))
+    domains = Config.KopechkaDomainsCache or ["kopechka.com"]
+    domain = __import__('random').choice(domains)
+    return f"{local}@{domain}"
 
 
 def pre_create_inboxes(count):
@@ -142,12 +156,10 @@ def get_inbox():
 
 
 def delete_inbox(addr):
-    """Delete an inbox from the cybertemp service."""
     try:
-        r = requests.delete(
-            f"{CT_BASE}/deleteMail",
-            params={"email": addr},
-            headers=CT_HEADERS,
+        r = __import__('requests').get(
+            f"{Config.KopechkaApiBase}/delete-inbox",
+            params={"api_key": Config.KopechkaApiKey, "email": addr},
             timeout=10,
         )
         Logger.write(f"delete_inbox: {addr} -> HTTP {r.status_code}")
@@ -158,18 +170,10 @@ def delete_inbox(addr):
 
 
 def cleanup_stale_inboxes():
-    """Try to clean up stale inboxes via the cybertemp bulk endpoint if available."""
     try:
-        r = requests.post(
-            f"{CT_BASE}/cleanup",
-            headers=CT_HEADERS,
-            timeout=10,
-        )
-        if r.status_code == 200:
-            data = r.json() if r.text else {}
-            removed = data.get("removed", data.get("count", 0))
-            Logger.write(f"cleanup_stale_inboxes: removed {removed}")
-            return removed
+        removed = 0
+        Logger.write(f"cleanup_stale_inboxes: removed {removed}")
+        return removed
     except Exception:
         pass
     return 0
@@ -277,7 +281,6 @@ def start_otp_prewarm(addr, timeout=OTP_WAIT_BEFORE_PIVOT):
 
 
 def find_verification_code(addr, timeout=120):
-    """Fallback OTP retrieval - poll until we get a code or timeout."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         code = fetch_otp(addr, timeout=min(10, timeout))
@@ -1348,7 +1351,7 @@ def main():
         print(f"{RED}warning: no proxies{X}")
         Logger.write("warning: no proxies")
     proxy_pool = ProxyPool(init_proxies, quarantine_cooldown=PROXY_QUARANTINE_COOLDOWN)
-    domains = fetch_cybertemp_domains()
+    domains = fetch_kopechka_domains()
     CT_DOMAINS[:] = domains
     print(f"{CYAN}{len(init_proxies)} proxies loaded, {len(CT_DOMAINS)} email domains fetched{X}")
     if DELETE_INBOX_AFTER:

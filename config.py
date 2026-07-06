@@ -58,10 +58,10 @@ BLOCKED_USERNAME_SUBS = (
 
 class Configuration:
     def __init__(self):
-        self.CybertempApiBase = "https://api.cybertemp.xyz"
-        self.CybertempApiKey = "tk_76198a6f2f873438a6bb68158b2c4ff43da3523d8cf6f8f0578a42f1c861947e"
-        self.CybertempDomainsCache = []
-        # Scoring thresholds exposed for utils.py ProxyScore
+        self.KopechkaApiBase = "https://api.kopechka.com"
+        self.KopechkaApiKey = "YOUR_KOPECHKA_API_KEY_HERE"
+        self.KopechkaDomainsCache = []
+
         self.SCORE_NAV_SLOW_THRESHOLD = SCORE_NAV_SLOW_THRESHOLD
         self.SCORE_CONSECUTIVE_ERR_THRESHOLD = SCORE_CONSECUTIVE_ERR_THRESHOLD
         self.SCORE_HTTP_422_THRESHOLD = SCORE_HTTP_422_THRESHOLD
@@ -69,40 +69,79 @@ class Configuration:
 
     def validate(self):
         warnings = []
-        if not self.CybertempApiKey:
-            warnings.append("CYBERTEMP_API_KEY is empty - inbox creation will fail")
+        if not self.KopechkaApiKey or self.KopechkaApiKey == "YOUR_KOPECHKA_API_KEY_HERE":
+            warnings.append("KOPECHKA_API_KEY is empty - inbox creation will fail")
         return warnings
 
 
 import random as _random
 
 
-def fetch_cybertemp_domains():
+def fetch_kopechka_domains():
     try:
         r = __import__('requests').get(
-            f"{Config.CybertempApiBase}/getDomains",
-            headers={"X-API-KEY": Config.CybertempApiKey},
+            f"{Config.KopechkaApiBase}/get-domains",
+            params={"api_key": Config.KopechkaApiKey},
             timeout=15,
         )
         if r.status_code == 200:
             data = r.json()
-            domains = []
-            for item in data:
-                if isinstance(item, dict):
-                    d = item.get("domain") or item.get("name") or ""
-                    status = str(item.get("status", "")).lower()
-                    if d and ("active" in status or "online" in status) and d not in BLOCKED_DOMAINS:
-                        domains.append(d)
-                elif isinstance(item, str):
-                    if item not in BLOCKED_DOMAINS:
-                        domains.append(item)
-            if domains:
-                _random.shuffle(domains)
-                Config.CybertempDomainsCache = domains
-                return domains
+            if data.get("status") == "success":
+                domains = []
+                for domain in data.get("domains", []):
+                    if isinstance(domain, str) and domain not in BLOCKED_DOMAINS:
+                        domains.append(domain)
+                if domains:
+                    _random.shuffle(domains)
+                    Config.KopechkaDomainsCache = domains
+                    return domains
     except Exception:
         pass
-    return Config.CybertempDomainsCache or ["cybertemp.xyz"]
+    return Config.KopechkaDomainsCache or ["kopechka.com"]
+
+
+def create_kopechka_email(domain=None):
+    try:
+        params = {"api_key": Config.KopechkaApiKey}
+        if domain:
+            params["domain"] = domain
+        
+        r = __import__('requests').get(
+            f"{Config.KopechkaApiBase}/create-inbox",
+            params=params,
+            timeout=15,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("status") == "success":
+                return data.get("email"), data.get("id")
+    except Exception:
+        pass
+    return None, None
+
+
+def get_kopechka_otp(email_id, timeout=60):
+    try:
+        r = __import__('requests').get(
+            f"{Config.KopechkaApiBase}/get-message",
+            params={
+                "api_key": Config.KopechkaApiKey,
+                "id": email_id
+            },
+            timeout=timeout,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("status") == "success":
+                message = data.get("message", "")
+                # Extract 6-digit code from email body
+                import re
+                match = re.search(r'\b(\d{6})\b', message)
+                if match:
+                    return match.group(1)
+    except Exception:
+        pass
+    return None
 
 
 Config = Configuration()

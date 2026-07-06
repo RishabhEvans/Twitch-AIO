@@ -97,7 +97,6 @@ def build_proxy_pool(proxies_file):
 
 
 class ProxyPool:
-    """Thread-safe rotating proxy pool with quarantine support."""
 
     def __init__(self, proxies_list, quarantine_cooldown=30):
         self.lock = threading.Lock()
@@ -311,7 +310,6 @@ SCORE_HTTP_429_THRESHOLD = 2
 
 
 def _load_score_config():
-    """Pull score thresholds from config if available."""
     global SCORE_NAV_SLOW_THRESHOLD, SCORE_CONSECUTIVE_ERR_THRESHOLD
     global SCORE_HTTP_422_THRESHOLD, SCORE_HTTP_429_THRESHOLD
     try:
@@ -400,11 +398,6 @@ def score_report():
 # ─── unified logger ───────────────────────────────────────────
 
 class Logger:
-    """Thread-safe logger with async batch writer, shared across all modules.
-
-    Only one instance should exist per process (write to the same LOGFILE).
-    Call Logger.init(path) once at startup, then use Logger.write(...) everywhere.
-    """
 
     _instance = None
     _init_lock = threading.Lock()
@@ -555,7 +548,6 @@ _emit_lock = threading.Lock()
 
 
 def emit_raw(line):
-    """Write a raw line through the footer system, logging as a side-effect."""
     with _print_lock:
         print(_footer_buf(line + "\n"), end="", flush=True)
     Logger.write(line)

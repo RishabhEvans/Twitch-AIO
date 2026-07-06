@@ -85,7 +85,6 @@ def load_messages(filename):
 
 
 class ChatProgress:
-    """Chat-specific progress tracking (shared with UI via set_status_lines_func)."""
     sent = 0
     start = 0.0
     session_duration = 0.0
