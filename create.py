@@ -64,7 +64,7 @@ _domain_idx = 0
 _domain_idx_lock = threading.Lock()
 
 PRE_CREATED_INBOXES = Queue()
-proxy_pool = None 
+proxy_pool = None
 
 _CONFIG_TEXT = ""
 try:
@@ -87,7 +87,6 @@ def save_blocked_domains():
         pass
 
 
-# ─── cybertemp throttle & domains ─────────────────────────────
 
 def ct_throttle():
     with _ct_lock:
@@ -108,7 +107,6 @@ def get_ct_domain():
         return CT_DOMAINS[0]
 
 
-# ─── inboxes ──────────────────────────────────────────────────
 
 def create_inbox():
     try:
@@ -191,7 +189,6 @@ def cleanup_stale_inboxes():
     return 0
 
 
-# ─── credentials generators ───────────────────────────────────
 
 def gen_username():
     for _ in range(100):
@@ -221,7 +218,6 @@ def random_birthday():
     return {"month": calendar.month_name[month], "day": str(day), "year": str(year)}
 
 
-# ─── OTP ──────────────────────────────────────────────────────
 
 _OTP_PATTERN = re.compile(r"\b(\d{4,8})\b")
 
@@ -317,7 +313,6 @@ def find_verification_code(order_id, timeout=120):
     return None
 
 
-# ─── file helpers ─────────────────────────────────────────────
 
 def append_line(path, line):
     if os.path.exists(path) and os.path.getsize(path) > 0:
@@ -337,7 +332,6 @@ def save(email, username, password, token):
             append_line(TOKENS, token)
 
 
-# ─── route filtering ──────────────────────────────────────────
 
 _ROUTE_ALLOW = (
     "twitch.tv", "twitchcdn.net", "ttvnw.net", "jtvnw.net",
@@ -369,7 +363,6 @@ def _route(route):
             return
 
 
-# ─── page helpers ─────────────────────────────────────────────
 
 def set_birthday(page, birth):
     for _ in range(3):
@@ -745,7 +738,6 @@ def wait_for_token(ctx, timeout=45):
     return None
 
 
-# ─── fast args ────────────────────────────────────────────────
 
 FAST_ARGS = [
     "--no-first-run",
@@ -762,7 +754,6 @@ FAST_ARGS = [
 ]
 
 
-# ─── create_one ───────────────────────────────────────────────
 
 _timing_collectors = {}
 
@@ -897,7 +888,6 @@ def create_one(slot):
                     Logger.write(f"{attempt_tag}: page loaded in {(time.time()-t_nav)*1000:.0f}ms, url={page.url}")
                     Logger.write(f"{attempt_tag}: step_load | loaded={page.url}")
 
-                    # ── early tunnel failure detection ──
                     if console_connections and not console_severe:
                         warn(f"{attempt_tag} slow proxy - tunnel connection failures, switching...")
                         Logger.write(f"{attempt_tag}: {len(console_connections)} tunnel failures detected after navigation - fast pivot")
@@ -969,8 +959,7 @@ def create_one(slot):
                             if p_line:
                                 proxy_pool.release(p_line)
                             attempt += 1
-                            # Break to outer retry loop
-                            email = None  # signal abort
+                            email = None
                             break
                         email = new_email
                         Logger.write(f"{attempt_tag}: replacement email ({email_retries+1}): {email}")
@@ -984,7 +973,7 @@ def create_one(slot):
                         page.wait_for_timeout(random.randint(200, 400))
                         email_retries += 1
                     if email is None:
-                        continue  # jump to next attempt (outer loop)
+                        continue
                     if email_retries >= 5:
                         Logger.write(f"{attempt_tag}: 5 email retries exhausted - all domains flagged, retrying with new proxy")
                         err(f"{attempt_tag} all emails flagged, retrying...")
@@ -993,9 +982,8 @@ def create_one(slot):
                         if p_line:
                             proxy_pool.release(p_line)
                         attempt += 1
-                        continue  # was return False - now properly continues retry loop
+                        continue
 
-                    # Check email block BEFORE waiting for username selector
                     email, abort = handle_email_block(page, email, attempt_tag, email_sel)
                     if abort:
                         last_reason = "reason: email domain blocked, retrying"
@@ -1181,11 +1169,9 @@ def create_one(slot):
                         continue
 
                     if signup_ok is True:
-                        # NOTE: _422_flag is NOT reset here (removed dead code)
                         Logger.write(f"{attempt_tag}: signup submitted, fetching OTP immediately...")
                         step(f"{attempt_tag} OTP detected, fetching code now...")
 
-                        # Join the prewarm thread before reading its result
                         if _otp_prewarm_thr and _otp_prewarm_thr.is_alive():
                             _otp_prewarm_thr.join(timeout=5.0)
 
@@ -1227,7 +1213,6 @@ def create_one(slot):
                                     page.keyboard.press("Enter")
                                     Logger.write(f"{attempt_tag}: submitted OTP via Enter, waiting for token...")
                             else:
-                                # Try fallback
                                 Logger.write(f"{attempt_tag}: primary OTP missed, trying fallback...")
                                 code = find_verification_code(order_id, timeout=otp_timeout)
                                 if code:
@@ -1354,7 +1339,6 @@ def main():
         except Exception:
             pass
 
-    # Set up status lines for create mode
     def _create_status_lines():
         created, goal = Progress.snapshot()
         if Progress.end_time > 0:

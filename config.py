@@ -142,7 +142,6 @@ def get_kopechka_otp(email_id, timeout=60):
             data = r.json()
             if data.get("status") == "success":
                 message = data.get("message", "")
-                # Extract 6-digit code from email body
                 import re
                 match = re.search(r'\b(\d{6})\b', message)
                 if match:

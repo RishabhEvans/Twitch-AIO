@@ -21,7 +21,6 @@ X = "\033[0m"
 C_ORANGE = "\033[38;5;208m"
 
 
-# ─── color helpers ────────────────────────────────────────────
 
 def speed_color(ms):
     if ms <= 500:
@@ -35,7 +34,6 @@ def speed_color(ms):
     return RED
 
 
-# ─── proxy parsing ────────────────────────────────────────────
 
 def normalize_proxy(proxy):
     if not proxy:
@@ -86,7 +84,6 @@ def parse_proxy_for_pw(proxy_line, sid=""):
     return {"server": f"http://{hp}"}
 
 
-# ─── proxy pool (shared) ──────────────────────────────────────
 
 def build_proxy_pool(proxies_file):
     try:
@@ -148,7 +145,6 @@ class ProxyPool:
             return len(self.pool)
 
 
-# ─── proxy speed check ────────────────────────────────────────
 
 def check_proxy_speed(proxy_line, timeout=3.0):
     try:
@@ -171,13 +167,11 @@ def check_proxy_speed(proxy_line, timeout=3.0):
         return False, 0
 
 
-# ─── dynamic timeout ──────────────────────────────────────────
 
 def dynamic_timeout(proxy_ms, multiplier=10, floor=15000, ceiling=90000):
     return min(max(int(proxy_ms * multiplier), floor), ceiling)
 
 
-# ─── proxy usage tracking ─────────────────────────────────────
 
 PROXY_USES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "info", "proxy-uses.txt")
 PROXIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results", "proxies.txt")
@@ -247,7 +241,6 @@ def purge_proxy_file(proxy_line, key=None):
                 pass
 
 
-# ─── stage timing ─────────────────────────────────────────────
 
 _stage_data = {}
 _stage_lock = threading.Lock()
@@ -300,9 +293,7 @@ class StageTimer:
             _stage_data.clear()
 
 
-# ─── proxy scoring ────────────────────────────────────────────
 
-# These are now read from config; defaults kept as fallback.
 SCORE_NAV_SLOW_THRESHOLD = 8000
 SCORE_CONSECUTIVE_ERR_THRESHOLD = 3
 SCORE_HTTP_422_THRESHOLD = 2
@@ -395,7 +386,6 @@ def score_report():
         return "\n".join(lines)
 
 
-# ─── unified logger ───────────────────────────────────────────
 
 class Logger:
 
@@ -436,7 +426,6 @@ class Logger:
             return
         inst.done.set()
         inst._writer.join(timeout=2.0)
-        # flush remaining
         with inst.lock:
             if inst.queue:
                 try:
@@ -464,7 +453,6 @@ class Logger:
             self.done.wait(timeout=0.5)
 
 
-# ─── shared UI / progress infrastructure ──────────────────────
 
 class Progress:
     created = 0
@@ -553,7 +541,6 @@ def emit_raw(line):
     Logger.write(line)
 
 
-# ─── spinner ──────────────────────────────────────────────────
 
 _spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 _spinner_idx = 0
@@ -566,7 +553,6 @@ def spinner_char():
     return c
 
 
-# ─── alias-style output helpers ───────────────────────────────
 
 def ok(m):
     emit_raw(f"{GREEN}[+] {m}{X}")
@@ -592,7 +578,6 @@ def spin_info(m):
     emit_raw(f"{CYAN}[{spinner_char()}] {m}{X}")
 
 
-# ─── progress printer thread ──────────────────────────────────
 
 def progress_printer():
     while not Progress.done_event.is_set():
@@ -601,7 +586,6 @@ def progress_printer():
         Progress.done_event.wait(timeout=0.15)
 
 
-# ─── stdin / exit helpers ─────────────────────────────────────
 
 def flush_stdin():
     try:
@@ -634,7 +618,6 @@ def pause_exit():
     os._exit(0)
 
 
-# ─── utility ──────────────────────────────────────────────────
 
 def clear_screen():
     system = platform.system().lower()

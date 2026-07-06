@@ -63,7 +63,7 @@ FAST_ARGS = [
     "--disable-features=AutomationControlled,Translate,OptimizationHints,MediaRouter,IsolateOrigins,site-per-process",
 ]
 
-proxy_pool = None  # set in main()
+proxy_pool = None
 
 
 def load_tokens():
@@ -333,7 +333,7 @@ def chat_one(slot, token, channel):
                     Logger.write(f"{attempt_tag}: console flagged mid-session - fast pivot")
                     break
 
-            return  # Success - session time expired
+            return
 
         except Exception as e:
             ename = type(e).__name__

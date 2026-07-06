@@ -66,7 +66,7 @@ FAST_ARGS = [
     "--disable-features=AutomationControlled,Translate,OptimizationHints,MediaRouter,IsolateOrigins,site-per-process",
 ]
 
-proxy_pool = None  # set in main()
+proxy_pool = None
 
 
 def load_tokens():
