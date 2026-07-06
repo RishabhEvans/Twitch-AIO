@@ -80,24 +80,32 @@ import random as _random
 def fetch_kopechka_domains():
     try:
         r = __import__('requests').get(
-            f"{Config.KopechkaApiBase}/get-domains",
-            params={"api_key": Config.KopechkaApiKey},
+            "https://api.kopechka.com/api/v1/domains",
+            headers={"Accept": "application/json", "x-api-key": Config.KopechkaApiKey},
             timeout=15,
         )
         if r.status_code == 200:
             data = r.json()
-            if data.get("status") == "success":
-                domains = []
-                for domain in data.get("domains", []):
-                    if isinstance(domain, str) and domain not in BLOCKED_DOMAINS:
-                        domains.append(domain)
-                if domains:
-                    _random.shuffle(domains)
-                    Config.KopechkaDomainsCache = domains
-                    return domains
+            items = data.get("data", data.get("domains", []))
+            if not isinstance(items, list):
+                items = []
+            domains = []
+            for item in items:
+                if isinstance(item, str):
+                    if item not in BLOCKED_DOMAINS:
+                        domains.append((item, item))
+                elif isinstance(item, dict):
+                    domain = item.get("name") or item.get("domain") or item.get("_id")
+                    sku = item.get("_id") or item.get("id") or domain
+                    if domain and domain not in BLOCKED_DOMAINS:
+                        domains.append((domain, sku))
+            if domains:
+                _random.shuffle(domains)
+                Config.KopechkaDomainsCache = domains
+                return domains
     except Exception:
         pass
-    return Config.KopechkaDomainsCache or ["kopechka.com"]
+    return Config.KopechkaDomainsCache or [("kopechka.com", "kopechka.com")]
 
 
 def create_kopechka_email(domain=None):

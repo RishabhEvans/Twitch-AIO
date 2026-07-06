@@ -52,9 +52,9 @@ _ANSI = re.compile(r"\033\[[0-9;]*m")
 file_lock = threading.Lock()
 
 cfg = Config
-CT_BASE = cfg.KopechkaApiBase.rstrip("/")
+CT_BASE = "https://api.kopechka.com/api/v1"
 CT_KEY = cfg.KopechkaApiKey
-CT_HEADERS = {"Accept": "application/json"}
+CT_HEADERS = {"Accept": "application/json", "x-api-key": cfg.KopechkaApiKey}
 CT_DOMAINS = []
 CT_RPS = 50
 _ct_gap = 1.0 / max(0.5, CT_RPS)
@@ -64,9 +64,8 @@ _domain_idx = 0
 _domain_idx_lock = threading.Lock()
 
 PRE_CREATED_INBOXES = Queue()
-proxy_pool = None  # set in main()
+proxy_pool = None 
 
-# Blocked domains persistence
 _CONFIG_TEXT = ""
 try:
     with open(os.path.join(HERE, "config.py"), encoding="utf-8") as _cf:
@@ -113,27 +112,36 @@ def get_ct_domain():
 
 def create_inbox():
     try:
-        r = __import__('requests').get(
-            f"{Config.KopechkaApiBase}/create-inbox",
-            params={"api_key": Config.KopechkaApiKey},
+        rq = __import__('requests')
+        import uuid
+        r = rq.post(
+            f"{CT_BASE}/orders",
+            json={"site": "twitch.tv", "quantity": 1},
+            headers=dict(CT_HEADERS, **{"Content-Type": "application/json", "idempotency-key": str(uuid.uuid4())}),
             timeout=15,
         )
-        if r.status_code == 200:
-            data = r.json()
-            if data.get("status") == "success":
-                email = data.get("email")
-                if email:
-                    domain = email.split("@")[1] if "@" in email else ""
-                    if domain not in BLOCKED_DOMAINS:
-                        return email
+        if r.status_code in (200, 201):
+            data = r.json().get("data", r.json())
+            email = data.get("email")
+            order_id = data.get("orderId") or data.get("id")
+            if email and order_id:
+                domain = email.split("@")[1] if "@" in email else ""
+                if domain not in BLOCKED_DOMAINS:
+                    try:
+                        rq.post(
+                            f"{CT_BASE}/orders/{order_id}/start-polling",
+                            json={},
+                            headers=dict(CT_HEADERS, **{"Content-Type": "application/json"}),
+                            timeout=10,
+                        )
+                    except Exception:
+                        pass
+                    Logger.write(f"create_inbox: order {order_id} -> {email}")
+                    return (email, order_id)
     except Exception:
         pass
-    length = __import__('random').randint(14, 24)
-    chars = __import__('string').ascii_lowercase + __import__('string').digits
-    local = "".join(__import__('random').choice(chars) for _ in range(length))
-    domains = Config.KopechkaDomainsCache or ["kopechka.com"]
-    domain = __import__('random').choice(domains)
-    return f"{local}@{domain}"
+    Logger.write("create_inbox: API call failed, returning None")
+    return None
 
 
 def pre_create_inboxes(count):
@@ -149,23 +157,27 @@ def pre_create_inboxes(count):
 
 
 def get_inbox():
-    try:
-        return PRE_CREATED_INBOXES.get_nowait()
-    except Exception:
-        return create_inbox()
+    return create_inbox()
 
 
-def delete_inbox(addr):
+def delete_inbox(addr_or_id):
     try:
-        r = __import__('requests').get(
-            f"{Config.KopechkaApiBase}/delete-inbox",
-            params={"api_key": Config.KopechkaApiKey, "email": addr},
+        if isinstance(addr_or_id, tuple):
+            order_id = addr_or_id[1]
+        elif isinstance(addr_or_id, str) and "@" in addr_or_id:
+            Logger.write(f"delete_inbox: legacy email addr {addr_or_id}, skipping")
+            return False
+        else:
+            order_id = str(addr_or_id)
+        r = __import__('requests').delete(
+            f"{CT_BASE}/orders/{order_id}",
+            headers=CT_HEADERS,
             timeout=10,
         )
-        Logger.write(f"delete_inbox: {addr} -> HTTP {r.status_code}")
-        return r.status_code == 200
+        Logger.write(f"delete_inbox: order {order_id} -> HTTP {r.status_code}")
+        return r.status_code in (200, 204)
     except Exception:
-        Logger.write(f"delete_inbox: {addr} -> request failed")
+        Logger.write(f"delete_inbox: {addr_or_id} -> request failed")
         return False
 
 
@@ -215,11 +227,19 @@ _OTP_PATTERN = re.compile(r"\b(\d{4,8})\b")
 
 
 def _extract_otp_from_messages(messages):
+    if not isinstance(messages, list):
+        return None
     for msg in messages:
-        subj = (msg.get("subject") or "").lower()
-        text = msg.get("text") or ""
-        html = msg.get("html") or ""
+        subj = (msg.get("subject") or msg.get("title") or "").lower()
+        text = msg.get("text") or msg.get("body") or msg.get("content") or msg.get("plain") or ""
+        html = msg.get("html") or msg.get("htmlBody") or ""
         blob = subj + " " + text + " " + re.sub("<[^>]+>", " ", html)
+        mobj = re.search(r"\b(\d{6})\b", blob)
+        if mobj:
+            return mobj.group(1)
+        mobj = re.search(r"\b(\d{6})\b", text)
+        if mobj:
+            return mobj.group(1)
         if "verif" in subj or "code" in subj or "verif" in blob:
             mobj = _OTP_PATTERN.search(blob)
             if mobj:
@@ -230,16 +250,19 @@ def _extract_otp_from_messages(messages):
     return None
 
 
-def fetch_otp(addr, timeout=OTP_FETCH_TIMEOUT):
+def fetch_otp(order_id, timeout=OTP_FETCH_TIMEOUT):
     deadline = time.time() + timeout
     burst = 3
     while time.time() < deadline:
         try:
-            r = requests.get(f"{CT_BASE}/getMail", params={"email": addr, "limit": 1}, headers=CT_HEADERS, timeout=8)
-            if r.status_code != 200:
+            r = requests.get(f"{CT_BASE}/orders/{order_id}/messages", headers=CT_HEADERS, timeout=8)
+            if r.status_code not in (200, 201):
                 time.sleep(0.3)
                 continue
-            messages = r.json() or []
+            data = r.json()
+            messages = data if isinstance(data, list) else data.get("messages", data.get("data", []))
+            if messages and burst == 3:
+                Logger.write(f"fetch_otp: order {order_id} has {len(messages)} messages, sample keys: {list(messages[0].keys()) if isinstance(messages[0], dict) else 'not dict'}")
             code = _extract_otp_from_messages(messages)
             if code:
                 return code
@@ -252,21 +275,25 @@ def fetch_otp(addr, timeout=OTP_FETCH_TIMEOUT):
             time.sleep(0.05)
         else:
             time.sleep(0.1)
+    Logger.write(f"fetch_otp: order {order_id} timed out after {timeout}s")
     return None
 
 
-def start_otp_prewarm(addr, timeout=OTP_WAIT_BEFORE_PIVOT):
+def start_otp_prewarm(order_id, timeout=OTP_WAIT_BEFORE_PIVOT):
     result = []
 
     def _poll():
         deadline = time.time() + max(1, min(timeout, timeout - 2))
         while time.time() < deadline and not result:
             try:
-                r = requests.get(f"{CT_BASE}/getMail", params={"email": addr, "limit": 1}, headers=CT_HEADERS, timeout=8)
-                if r.status_code != 200:
+                r = requests.get(f"{CT_BASE}/orders/{order_id}/messages", headers=CT_HEADERS, timeout=8)
+                if r.status_code not in (200, 201):
                     time.sleep(0.3)
                     continue
-                messages = r.json() or []
+                data = r.json()
+                messages = data if isinstance(data, list) else data.get("messages", data.get("data", []))
+                if messages and not result:
+                    Logger.write(f"otp_prewarm: order {order_id} has {len(messages)} messages")
                 code = _extract_otp_from_messages(messages)
                 if code:
                     result.append(code)
@@ -280,10 +307,10 @@ def start_otp_prewarm(addr, timeout=OTP_WAIT_BEFORE_PIVOT):
     return result, t
 
 
-def find_verification_code(addr, timeout=120):
+def find_verification_code(order_id, timeout=120):
     deadline = time.time() + timeout
     while time.time() < deadline:
-        code = fetch_otp(addr, timeout=min(10, timeout))
+        code = fetch_otp(order_id, timeout=min(10, timeout))
         if code:
             return code
         time.sleep(0.5)
@@ -597,6 +624,8 @@ def check_failure_state(page):
                         return "blocked"
                     if "suspicious" in text.lower() or "kasada" in text.lower() or "ip flagged" in text.lower() or "access denied" in text.lower():
                         return "proxy_flagged"
+                    if "network connection" in text.lower() or "internet connection" in text.lower() or "try again" in text.lower():
+                        return "proxy_flagged"
                     return f"error: {text[:80]}"
     except Exception:
         pass
@@ -653,9 +682,6 @@ def is_otp_page(page):
 def submit_signup(page, console_integrity=None, network_rejected=None, submitted=None, timeout=15):
     end = time.time() + timeout
     while time.time() < end:
-        if console_integrity:
-            Logger.write("submit_signup: console integrity error detected")
-            return "integrity_error"
         try:
             body = page.locator("body").inner_text() or ""
             body_lower = body.lower()
@@ -697,6 +723,10 @@ def submit_signup(page, console_integrity=None, network_rejected=None, submitted
             except Exception:
                 pass
             return "blocked"
+        if console_integrity:
+            Logger.write("submit_signup: console integrity error detected")
+            return "integrity_error"
+        time.sleep(0.1)
     return False
 
 
@@ -774,13 +804,14 @@ def create_one(slot):
             info(f"{tag} new proxy = {col}{ms:.0f}ms{X}")
         else:
             info(f"{attempt_tag} new proxy = {col}{ms:.0f}ms{X}")
-        email = get_inbox()
-        if not email:
+        inbox_data = get_inbox()
+        if not inbox_data:
             last_reason = "reason: no email created"
             proxy_pool.release(p_line)
             err(f"{tag} no email created, retrying...")
             attempt += 1
             continue
+        email, order_id = inbox_data
         username = gen_username()
         password = gen_password()
         birth = random_birthday()
@@ -788,6 +819,7 @@ def create_one(slot):
         try:
             user_dir = tempfile.mkdtemp(prefix="pw_")
         except Exception:
+            last_reason = "reason: tempfile.mkdtemp failed"
             Logger.write(f"{attempt_tag}: FATAL - tempfile.mkdtemp failed, retrying in 2s")
             if p_line:
                 proxy_pool.release(p_line)
@@ -823,7 +855,10 @@ def create_one(slot):
                         if "irc-ws" in msg.text:
                             return
                         Logger.write(f"CONSOLE {attempt_tag}: [{msg.type}] {msg.text}")
-                        if "integrity" in msg.text.lower():
+                        if msg.type == "error" and (
+                            "failed to find a valid digest in the 'integrity' attribute" in msg.text.lower()
+                            or "integrity mismatch" in msg.text.lower()
+                        ):
                             console_integrity.append(True)
                         if any(kw in msg.text.lower() for kw in ("suspicious", "kasada", "ip flagged", "access denied", "try again later")):
                             console_severe.append(True)
@@ -1002,8 +1037,8 @@ def create_one(slot):
                     settle_hi = min(4500, max(settle_lo + 1000, int(ms * 6)))
                     settle_delay = random.randint(min(settle_lo, settle_hi), max(settle_lo, settle_hi))
                     Logger.write(f"{attempt_tag}: step_submit_signup | waiting for React to settle ({settle_delay}ms)...")
-                    otp_timeout = random.uniform(8.0, 9.0)
-                    _otp_prewarm, _otp_prewarm_thr = start_otp_prewarm(email, timeout=otp_timeout)
+                    otp_timeout = random.uniform(15.0, 16.0)
+                    _otp_prewarm, _otp_prewarm_thr = start_otp_prewarm(order_id, timeout=otp_timeout)
                     page.wait_for_timeout(settle_delay)
                     pw_field = page.locator('input[type="password"]').first
                     try:
@@ -1016,6 +1051,10 @@ def create_one(slot):
                         page.wait_for_timeout(100)
                     pw_field.press("Enter")
                     Logger.write(f"{attempt_tag}: pressed Enter on password field")
+                    had_integrity_before_submit = bool(console_integrity)
+                    if had_integrity_before_submit:
+                        Logger.write(f"{attempt_tag}: pre-submit integrity events cleared ({sum(1 for _ in console_integrity)}), monitoring post-submit only")
+                    console_integrity.clear()
                     t_submit = time.time()
                     submit_timeout = max(15, int(ms * 2 / 1000))
                     if console_severe:
@@ -1030,27 +1069,23 @@ def create_one(slot):
                     if signup_ok == "already_taken" or signup_ok == "integrity_error":
                         last_reason = f"reason: {signup_ok}"
                         Logger.write(f"{attempt_tag}: {signup_ok} - fast pivot")
-                        proxy_pool.release(p_line)
+                        if signup_ok == "integrity_error":
+                            Logger.write(f"{attempt_tag}: real SRI integrity error - quarantining proxy")
+                            proxy_pool.quarantine(p_line)
+                            purge_proxy_file(p_line)
+                        else:
+                            proxy_pool.release(p_line)
                         shutil.rmtree(user_dir, ignore_errors=True)
                         attempt += 1
                         continue
 
                     if signup_ok == "proxy_flagged":
-                        force_quarantine = slow_network_flag[0]
-                        if force_quarantine:
-                            Logger.write(f"{attempt_tag}: SLOW NETWORK detected - FORCE QUARANTINE proxy + fresh credentials")
-                        else:
-                            Logger.write(f"{attempt_tag}: proxy flagged by Twitch - checking ProxyScore before quarantine")
-                            proxy_score.http_429 += 1
-                        if force_quarantine or proxy_score.should_quarantine:
-                            Logger.write(f"{attempt_tag}: ProxyScore QUARANTINE - {proxy_score}")
-                            purge_proxy_file(p_line)
-                            proxy_pool.quarantine(p_line)
-                        else:
-                            Logger.write(f"{attempt_tag}: single flag - not quarantining ({proxy_score})")
+                        last_reason = "reason: proxy flagged by Twitch"
+                        Logger.write(f"{attempt_tag}: proxy flagged - quarantining")
+                        proxy_score.http_429 += 1
+                        proxy_pool.quarantine(p_line)
+                        purge_proxy_file(p_line)
                         shutil.rmtree(user_dir, ignore_errors=True)
-                        if p_line and not force_quarantine and not proxy_score.should_quarantine:
-                            proxy_pool.release(p_line)
                         p_line = None
                         attempt += 1
                         continue
@@ -1100,6 +1135,7 @@ def create_one(slot):
                             except Exception:
                                 err(f"{attempt_tag} signup did not submit")
                         if _422_flag[0]:
+                            last_reason = "reason: proxy blocked (422)"
                             Logger.write(f"{attempt_tag}: 422 on blocked - proxy rejected, fast pivot")
                             err(f"{attempt_tag} PROXY BLOCKED (422) - removing proxy + new attempt incoming")
                             if p_line:
@@ -1113,6 +1149,7 @@ def create_one(slot):
                             attempt += 1
                             continue
                         if new_email == email and not signup_ok:
+                            last_reason = "reason: proxy blocked - fresh retry"
                             Logger.write(f"{attempt_tag}: block without domain change - proxy issue, fast pivot")
                             err(f"{attempt_tag} PROXY BLOCKED - removing proxy + new attempt incoming")
                             if p_line:
@@ -1127,6 +1164,7 @@ def create_one(slot):
                             continue
 
                     if not signup_ok and not console_severe and not console_connections:
+                        last_reason = "reason: submit timeout - proxy/tunnel dead"
                         Logger.write(f"{attempt_tag}: submit_signup returned False - proxy/tunnel likely dead, immediate pivot")
                         proxy_score.timeout += 1
                         err(f"{attempt_tag} submit timeout (proxy dead) - fast pivot")
@@ -1151,13 +1189,13 @@ def create_one(slot):
                         if _otp_prewarm_thr and _otp_prewarm_thr.is_alive():
                             _otp_prewarm_thr.join(timeout=5.0)
 
+                        page.wait_for_selector('input[inputmode="numeric"]', state='visible', timeout=5000)
                         try:
-                            step(f"{attempt_tag} fetching OTP from inbox...")
                             with StageTimer("otp_fetch", tag=attempt_tag, extra=timing):
                                 if _otp_prewarm:
                                     code = _otp_prewarm[0]
                                 else:
-                                    code = fetch_otp(email, timeout=otp_timeout)
+                                    code = fetch_otp(order_id)
                             if code:
                                 Logger.write(f"{attempt_tag}: OTP received: {code}")
                                 step(f"{attempt_tag} entering OTP code...")
@@ -1191,7 +1229,7 @@ def create_one(slot):
                             else:
                                 # Try fallback
                                 Logger.write(f"{attempt_tag}: primary OTP missed, trying fallback...")
-                                code = find_verification_code(email, timeout=otp_timeout)
+                                code = find_verification_code(order_id, timeout=otp_timeout)
                                 if code:
                                     Logger.write(f"{attempt_tag}: fallback OTP received: {code}")
                                     step(f"{attempt_tag} entering OTP code (fallback)...")
@@ -1251,7 +1289,7 @@ def create_one(slot):
                         Progress.inc()
                         ok(f"{tag} successfully created: {email}")
                         if DELETE_INBOX_AFTER:
-                            delete_inbox(email)
+                            delete_inbox((email, order_id))
                         page.wait_for_timeout(random.randint(500, 800))
                         created = True
                         return True
@@ -1358,9 +1396,6 @@ def main():
         freed = cleanup_stale_inboxes()
         if freed:
             Logger.write(f"cleared {freed} stale inboxes")
-    pre_count = min(n + 5, 100)
-    created_count = pre_create_inboxes(pre_count)
-    Logger.write(f"pre-created {created_count}/{pre_count} inboxes")
     print(f"{GREEN}ready. launching {workers} window(s)...{X}")
     Progress.reset()
     Progress.goal = n

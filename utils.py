@@ -539,7 +539,7 @@ def _footer_buf(prefix=""):
     buf = ""
     if _footer_drawn:
         buf += "\r" + (f"\033[{len(lines) - 1}A" if len(lines) > 1 else "") + "\033[J"
-    buf += prefix + "\n".join(lines)
+    buf += prefix + os.linesep.join(lines)
     _footer_drawn = True
     return buf
 
@@ -619,7 +619,7 @@ def flush_stdin():
 
 def pause_exit():
     flush_stdin()
-    print(f"{GREEN}done! press [ENTER] to exit...{X}")
+    print(f"\n{GREEN}done! press [ENTER] to exit...{X}")
     import sys
     sys.stdout.flush()
     if os.name == "nt":
