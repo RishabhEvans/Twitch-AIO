@@ -1,4 +1,8 @@
-# twitch-aio
+<p align="center">
+  <img src="assets/banner.png" alt="Twitch-AIO banner" width="100%">
+</p>
+
+# Twitch-AIO
 
 An all-in-one Twitch automation toolkit. Create accounts, follow channels and send chat messages from a pool of accounts, with built-in proxy management and a stealth browser engine.
 
@@ -30,7 +34,7 @@ The browser automation runs on [Patchright](https://github.com/Kaliiiiiiiiii-Vin
 ## Install
 
 ```bash
-git clone https://github.com/RishabhEvans/twitch-aio.git
+git clone https://github.com/RishabhEvans/Twitch-AIO.git
 cd twitch-aio
 pip install -r requirements.txt
 patchright install chrome
@@ -102,7 +106,7 @@ Pick a channel, a session duration, how many accounts to use, and which message 
 ## Project layout
 
 ```
-twitch-aio/
+Twitch-AIO/
 ├── create.py           Account creation
 ├── follow.py           Follow automation
 ├── chat.py             Chat automation
